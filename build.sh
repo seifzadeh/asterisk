@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-PREFIX="${ASTERISK_DEV_PREFIX:-/opt/asterisk-dev}"
 STATE_DIR="/var/lib/asterisk-dev-vm"
 CCACHE_DIR="${CCACHE_DIR:-/var/cache/asterisk-dev-ccache}"
 JOBS="${BUILD_JOBS:-$(nproc)}"
-DEPS_MARKER="${STATE_DIR}/debian13-deps-v1"
+DEPS_MARKER="${STATE_DIR}/debian13-deps-v2"
 
 if [[ ${EUID} -ne 0 ]]; then
     echo "ERROR: build.sh must run as root."
@@ -17,18 +16,21 @@ if [[ ! -f configure.ac || ! -f Makefile.rules ]]; then
     exit 1
 fi
 
-mkdir -p "${STATE_DIR}" "${CCACHE_DIR}" "${PREFIX}"
+mkdir -p "${STATE_DIR}" "${CCACHE_DIR}"
 
 if [[ ! -f "${DEPS_MARKER}" ]]; then
     echo "==> Installing Debian 13 build dependencies"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y --no-install-recommends         build-essential ca-certificates ccache git pkg-config         autoconf automake libtool
+    apt-get install -y --no-install-recommends \
+        build-essential ca-certificates ccache git pkg-config \
+        autoconf automake libtool
     contrib/scripts/install_prereq install
     touch "${DEPS_MARKER}"
 fi
 
 export CCACHE_DIR
+export CC="ccache gcc"
 ccache --max-size="${CCACHE_MAX_SIZE:-10G}"
 
 if [[ "${CLEAN_BUILD:-0}" == "1" ]]; then
@@ -41,32 +43,54 @@ if [[ ! -x ./configure ]]; then
     ./bootstrap.sh
 fi
 
-echo "==> Configuring Asterisk"
-CC="ccache gcc" ./configure     --prefix="${PREFIX}"     --sysconfdir="${PREFIX}/etc"     --localstatedir="${PREFIX}/var"     --with-pjproject-bundled     --with-jansson-bundled
+echo "==> Configuring Asterisk with default system paths"
+./configure
 
 echo "==> Preparing menuselect"
 make menuselect.makeopts
 
-echo "==> Building Asterisk with ${JOBS} jobs"
+echo "==> Compiling Asterisk with ${JOBS} jobs"
 make -j"${JOBS}"
 
-echo "==> Installing development build into ${PREFIX}"
-make install
+echo "==> Stopping the currently installed Asterisk"
+systemctl stop asterisk || true
 
-if [[ ! -f "${PREFIX}/etc/asterisk/asterisk.conf" ]]; then
-    echo "==> Installing sample configuration (first build only)"
-    make samples
+echo "==> Force-killing any remaining Asterisk processes"
+pkill -9 -x asterisk 2>/dev/null || true
+
+for attempt in 1 2 3 4 5; do
+    if ! pgrep -x asterisk >/dev/null; then
+        break
+    fi
+    sleep 1
+    pkill -9 -x asterisk 2>/dev/null || true
+done
+
+if pgrep -x asterisk >/dev/null; then
+    echo "ERROR: an Asterisk process is still running."
+    pgrep -a -x asterisk || true
+    exit 1
 fi
 
-git rev-parse HEAD > "${PREFIX}/BUILD_COMMIT"
-date --iso-8601=seconds > "${PREFIX}/BUILD_TIME"
+echo "==> Uninstalling previous Asterisk binaries and modules"
+make uninstall
 
-echo "==> Build completed"
-"${PREFIX}/sbin/asterisk" -V
-echo "Commit: $(cat "${PREFIX}/BUILD_COMMIT")"
-echo "Install path: ${PREFIX}"
-echo
-echo "To start it manually:"
-echo "  ${PREFIX}/sbin/asterisk -C ${PREFIX}/etc/asterisk/asterisk.conf -cvvvvv"
+echo "==> Installing the new build into the operating system"
+make install
+ldconfig
+
+git rev-parse HEAD > /usr/lib/asterisk/BUILD_COMMIT
+date --iso-8601=seconds > /usr/lib/asterisk/BUILD_TIME
+
+echo "==> Restarting Asterisk"
+systemctl restart asterisk
+systemctl --no-pager --full status asterisk
+
+echo "==> Installed version"
+/usr/sbin/asterisk -V
+
+echo "==> Build and deployment completed"
+echo "Commit: $(cat /usr/lib/asterisk/BUILD_COMMIT)"
+echo "Configuration preserved at: /etc/asterisk"
 echo
 ccache --show-stats
