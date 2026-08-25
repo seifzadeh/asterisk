@@ -1,0 +1,79 @@
+name: Asterisk Debian 13 VM Build
+
+on:
+  push:
+    branches:
+      - ast-dev-vm
+  workflow_dispatch:
+    inputs:
+      clean_build:
+        description: Remove previous build output before compiling
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ast-dev-vm
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and install on development VM
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout ast-dev-vm
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          fetch-depth: 1
+
+      - name: Verify dedicated root runner
+        shell: bash
+        run: |
+          test "$(id -u)" -eq 0
+          test "${RUNNER_OS}" = "Linux"
+          . /etc/os-release
+          test "${ID}" = "debian"
+          test "${VERSION_ID}" = "13"
+
+      - name: Build and install Asterisk
+        id: asterisk_build
+        shell: bash
+        env:
+          CLEAN_BUILD: ${{ inputs.clean_build && '1' || '0' }}
+          ASTERISK_DEV_PREFIX: /opt/asterisk-dev
+          CCACHE_DIR: /var/cache/asterisk-dev-ccache
+        run: |
+          mkdir -p /var/log/asterisk-dev-vm
+          chmod +x ./build.sh
+          set -o pipefail
+          ./build.sh 2>&1 | tee "/var/log/asterisk-dev-vm/${GITHUB_SHA}.log"
+          ln -sfn "${GITHUB_SHA}.log" /var/log/asterisk-dev-vm/latest.log
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asterisk-build-${{ github.sha }}
+          path: /var/log/asterisk-dev-vm/${{ github.sha }}.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Write job summary
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "## Asterisk VM build is ready"
+            echo
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Install path: \`/opt/asterisk-dev\`"
+            echo "- Binary: \`/opt/asterisk-dev/sbin/asterisk\`"
+            echo "- Configuration: \`/opt/asterisk-dev/etc/asterisk\`"
+            echo "- Build log: \`/var/log/asterisk-dev-vm/latest.log\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
