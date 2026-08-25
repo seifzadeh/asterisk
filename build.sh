@@ -90,7 +90,7 @@ echo "==> Installed version"
 /usr/sbin/asterisk -V
 
 echo "==> Build and deployment completed"
-echo "Commit: $(cat /usr/lib/asterisk/BUILD_COMMIT)"
+echo "Commit: $(cat "${STATE_DIR}/BUILD_COMMIT")"
 echo "Configuration preserved at: /etc/asterisk"
 echo
 ccache --show-stats
