@@ -25,7 +25,17 @@ if [[ ! -f "${DEPS_MARKER}" ]]; then
     apt-get install -y --no-install-recommends \
         build-essential ca-certificates ccache git pkg-config \
         autoconf automake libtool
-    contrib/scripts/install_prereq install
+    prereq_output=""
+    if ! prereq_output="$(contrib/scripts/install_prereq install 2>&1)"; then
+        if [[ -n "${prereq_output}" ]]; then
+            printf '%s\n' "${prereq_output}"
+            echo "ERROR: prerequisite installation failed."
+            exit 1
+        fi
+        echo "==> Asterisk prerequisite script found no missing packages"
+    else
+        printf '%s\n' "${prereq_output}"
+    fi
     touch "${DEPS_MARKER}"
 fi
 
