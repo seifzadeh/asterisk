@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build and install on development VM
+    name: Build, install and restart Asterisk
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 90
 
@@ -32,7 +32,7 @@ jobs:
           clean: false
           fetch-depth: 1
 
-      - name: Verify dedicated root runner
+      - name: Verify dedicated Debian 13 root runner
         shell: bash
         run: |
           test "$(id -u)" -eq 0
@@ -41,12 +41,11 @@ jobs:
           test "${ID}" = "debian"
           test "${VERSION_ID}" = "13"
 
-      - name: Build and install Asterisk
+      - name: Build, deploy and restart Asterisk
         id: asterisk_build
         shell: bash
         env:
           CLEAN_BUILD: ${{ inputs.clean_build && '1' || '0' }}
-          ASTERISK_DEV_PREFIX: /opt/asterisk-dev
           CCACHE_DIR: /var/cache/asterisk-dev-ccache
         run: |
           mkdir -p /var/log/asterisk-dev-vm
@@ -55,7 +54,7 @@ jobs:
           ./build.sh 2>&1 | tee "/var/log/asterisk-dev-vm/${GITHUB_SHA}.log"
           ln -sfn "${GITHUB_SHA}.log" /var/log/asterisk-dev-vm/latest.log
 
-      - name: Upload build log
+      - name: Upload build and deployment log
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -69,11 +68,13 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## Asterisk VM build is ready"
+            echo "## Asterisk is built, installed and running"
             echo
             echo "- Commit: \`${GITHUB_SHA}\`"
-            echo "- Install path: \`/opt/asterisk-dev\`"
-            echo "- Binary: \`/opt/asterisk-dev/sbin/asterisk\`"
-            echo "- Configuration: \`/opt/asterisk-dev/etc/asterisk\`"
+            echo "- Binary: \`/usr/sbin/asterisk\`"
+            echo "- Modules: \`/usr/lib/asterisk/modules\`"
+            echo "- Configuration preserved: \`/etc/asterisk\`"
             echo "- Build log: \`/var/log/asterisk-dev-vm/latest.log\`"
+            echo
+            echo "\`systemctl restart asterisk\` completed successfully."
           } >> "${GITHUB_STEP_SUMMARY}"
